@@ -1,56 +1,96 @@
 import socket
 import pickle
-import struct
 import threading
+import time
+import os
 
-SERVER_IP = input("Enter server IP (default 127.0.0.1): ").strip() or "127.0.0.1"
+# CONFIG
+server_ip = input("Enter server IP: ")
 PORT = 5555
 
-def send_full(sock, obj):
-    data = pickle.dumps(obj)
-    sock.sendall(struct.pack(">I", len(data)) + data)
-
-def recvall(sock, n):
-    data = b""
-    while len(data) < n:
-        packet = sock.recv(n - len(data))
-        if not packet:
-            return None
-        data += packet
-    return data
-
-def recv_full(sock):
-    raw_len = recvall(sock, 4)
-    if not raw_len:
-        return None
-    msg_len = struct.unpack(">I", raw_len)[0]
-    return pickle.loads(recvall(sock, msg_len))
-
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect((SERVER_IP, PORT))
+try:
+    client.connect((server_ip, PORT))
+except:
+    print("Could not connect to server.")
+    exit()
 
-my_name = input("Enter your name: ").strip() or "Player"
-send_full(client, my_name)
+my_name = input("Enter your name: ")
+client.sendall(pickle.dumps(my_name))
 
-def listener():
+game_state = {}
+my_index = None
+
+# RECEIVE UPDATES
+def receive_updates():
+    global game_state, my_index
     while True:
-        data = recv_full(client)
-        if not data:
+        try:
+            data = client.recv(4096)
+            if not data:
+                break
+            game_state = pickle.loads(data)
+            if my_index is None and "players" in game_state:
+                for i, p in enumerate(game_state["players"]):
+                    if p["name"] == my_name:
+                        my_index = i
+                        break
+            display_state()
+        except:
             print("Disconnected from server.")
+            client.close()
             break
-        print("\n--- GAME STATE ---")
-        print(f"Message: {data['message']}")
-        print(f"Round: {data['round']}")
-        print(f"Table: {data['table']}")
-        print("Players:")
-        for p in data["players"]:
-            hand = p["hand"] if p["name"] == my_name else ["?", "?"]
-            print(f"  {p['name']}: Chips={p['chips']} Hand={hand}")
-        print("------------------")
 
-threading.Thread(target=listener, daemon=True).start()
+# DISPLAY STATE
+def display_state():
+    os.system('cls' if os.name == 'nt' else 'clear')
+    global game_state, my_index
+    if not game_state.get("game_started", False):
+        print("\nWaiting for players...")
+        return
 
-while True:
-    cmd = input("(press Enter to refresh / type quit): ").strip().lower()
-    if cmd == "quit":
+    print("\n=== Game ===")
+    print(f"Pot: {game_state['pot']}")
+    print(f"Table: {game_state['table']} [{game_state['round_stage']}]")
+    print("Players:")
+    for i, p in enumerate(game_state["players"]):
+        status = "Active" if p["active"] else "Folded"
+        turn_marker = "-->" if i == game_state["turn_index"] else "  "
+        me_marker = "(You)" if i == my_index else ""
+        print(f"{turn_marker} {p['name']} {me_marker}: Chips: {p['chips']}, Status: {status}, Bet: {p['current_bet']}")
+
+    if my_index is not None:
+        hand = game_state["players"][my_index].get("hand", [])
+        if hand:
+            print(f"Your hand: {' '.join(hand)}")
+
+    if game_state["turn_index"] == my_index:
+        print("\nIt's YOUR turn!")
+        take_action()
+    else:
+        current = game_state["players"][game_state["turn_index"]]["name"] if 0 <= game_state["turn_index"] < len(game_state["players"]) else "None"
+        print(f"\nWaiting for {current} to act...")
+
+# PLAYER ACTION
+def take_action():
+    actions = ["fold", "call", "raise", "allin"]
+    while True:
+        action = input("Your turn (fold/call/raise/allin): ").lower()
+        if action not in actions:
+            print("Invalid action. Try again.")
+            continue
+        amount = 0
+        if action == "raise":
+            while True:
+                try:
+                    amount = int(input("Enter raise amount: "))
+                    break
+                except:
+                    print("Enter a valid number")
+        client.sendall(pickle.dumps({"player": my_name, "action": action, "amount": amount}))
         break
+
+# MAIN LOOP
+threading.Thread(target=receive_updates, daemon=True).start()
+while True:
+    time.sleep(1)
