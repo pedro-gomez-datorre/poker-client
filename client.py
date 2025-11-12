@@ -45,13 +45,15 @@ def receive_updates():
 def display_state():
     os.system('cls' if os.name == 'nt' else 'clear')
     global game_state, my_index
+
     if not game_state.get("game_started", False):
-        print("\nWaiting for players...")
+        print("\nWaiting for players to join...")
         return
 
-    print("\n=== Game ===")
+    print("\n=== Texas Hold'em ===")
     print(f"Pot: {game_state['pot']}")
-    print(f"Table: {game_state['table']} [{game_state['round_stage']}]")
+    print(f"Table ({game_state['round_stage']}): {' '.join(game_state['table']) if game_state['table'] else 'Empty'}\n")
+
     print("Players:")
     for i, p in enumerate(game_state["players"]):
         status = "Active" if p["active"] else "Folded"
@@ -59,17 +61,31 @@ def display_state():
         me_marker = "(You)" if i == my_index else ""
         print(f"{turn_marker} {p['name']} {me_marker}: Chips: {p['chips']}, Status: {status}, Bet: {p['current_bet']}")
 
+    # Show your hand
     if my_index is not None:
         hand = game_state["players"][my_index].get("hand", [])
         if hand:
-            print(f"Your hand: {' '.join(hand)}")
+            print(f"\nYour hand: {' '.join(hand)}")
 
-    if game_state["turn_index"] == my_index:
+    # Show winner if round ended
+    if game_state.get("round_stage") == "showdown":
+        winner = game_state.get("winner")
+        if winner:
+            print(f"\n*** {winner} wins the pot of {game_state['pot']} chips! ***")
+        print("\nPlayers' hands:")
+        for p in game_state["players"]:
+            hand_display = ' '.join(p['hand']) if p['hand'] else 'N/A'
+            print(f"{p['name']}: {hand_display}")
+
+    # Prompt for action if it's your turn
+    if my_index is not None and game_state.get("turn_index") == my_index and game_state.get("round_stage") != "showdown":
         print("\nIt's YOUR turn!")
         take_action()
     else:
-        current = game_state["players"][game_state["turn_index"]]["name"] if 0 <= game_state["turn_index"] < len(game_state["players"]) else "None"
-        print(f"\nWaiting for {current} to act...")
+        current_index = game_state.get("turn_index")
+        if current_index is not None and 0 <= current_index < len(game_state.get("players", [])):
+            current_name = game_state["players"][current_index]["name"]
+            print(f"\nWaiting for {current_name} to act...")
 
 # PLAYER ACTION
 def take_action():
